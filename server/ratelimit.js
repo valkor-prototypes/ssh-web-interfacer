@@ -1,3 +1,5 @@
+import { log } from './logger.js';
+
 // Per-IP limits on failed attempts (logins and SSH authentications), so the
 // tunnel can't be used to brute-force the password, keys or passphrases.
 
@@ -9,7 +11,7 @@ export function clientIp(req) {
   return req.headers['cf-connecting-ip'] || req.socket.remoteAddress || 'unknown';
 }
 
-export function createLimiter({ windowMs = WINDOW_MS, maxFailures = MAX_FAILURES } = {}) {
+export function createLimiter(name, { windowMs = WINDOW_MS, maxFailures = MAX_FAILURES } = {}) {
   const failures = new Map();
 
   return {
@@ -26,8 +28,14 @@ export function createLimiter({ windowMs = WINDOW_MS, maxFailures = MAX_FAILURES
       const entry = failures.get(ip);
       if (!entry || Date.now() - entry.first > windowMs) {
         failures.set(ip, { first: Date.now(), count: 1 });
-      } else {
-        entry.count += 1;
+        return;
+      }
+      entry.count += 1;
+      if (entry.count === maxFailures) {
+        log.alert('security', `possible brute force: ${maxFailures} failed ${name} attempts, IP blocked`, {
+          ip,
+          minutes: Math.round(windowMs / 60000),
+        });
       }
     },
     clear(ip) {
@@ -36,5 +44,5 @@ export function createLimiter({ windowMs = WINDOW_MS, maxFailures = MAX_FAILURES
   };
 }
 
-export const loginLimiter = createLimiter();
-export const sshLimiter = createLimiter();
+export const loginLimiter = createLimiter('login');
+export const sshLimiter = createLimiter('ssh');

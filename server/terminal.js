@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Client } from 'ssh2';
 import { config } from './config.js';
+import { log } from './logger.js';
 import { sshLimiter } from './ratelimit.js';
 
 const PING_INTERVAL_MS = 25_000;
@@ -37,6 +38,8 @@ export function attachTerminal(ws, ip) {
   let started = false;
   let alive = true;
 
+  let session = null; // { username, since } once the shell is up
+
   const fail = (code, message, closeCode = 1011) => {
     send(ws, { type: 'error', code, message });
     ws.close(closeCode);
@@ -57,10 +60,15 @@ export function attachTerminal(ws, ip) {
     clearTimeout(authTimer);
     clearInterval(ping);
     ssh.end();
+    if (session) {
+      log.info('ssh', 'session ended', { ip, user: session.username, minutes: ((Date.now() - session.since) / 60000).toFixed(1) });
+      session = null;
+    }
   };
 
   function start({ username, privateKey, passphrase, cols, rows }) {
     if (typeof username !== 'string' || !USERNAME_RE.test(username)) {
+      log.warn('ssh', 'invalid username', { ip, user: username });
       return fail('auth', 'Invalid username.', 1008);
     }
     if (typeof privateKey !== 'string' || !privateKey.includes('PRIVATE KEY')) {
@@ -71,7 +79,8 @@ export function attachTerminal(ws, ip) {
       .on('ready', () => {
         clearTimeout(authTimer);
         sshLimiter.clear(ip);
-        console.log(`[ssh] ${username} authenticated from ${ip}`);
+        session = { username, since: Date.now() };
+        log.info('ssh', 'authenticated, shell opened', { ip, user: username });
         send(ws, { type: 'status', state: 'connected', host: config.ssh.host, user: username });
         ssh.shell({ term: 'xterm-256color', cols: clamp(cols, 1, 1000) || 80, rows: clamp(rows, 1, 500) || 24 }, (err, s) => {
           if (err) return fail('shell', `Could not open shell: ${err.message}`);
@@ -86,18 +95,24 @@ export function attachTerminal(ws, ip) {
       })
       .on('error', (err) => {
         if (err.level === 'client-authentication') {
+          log.warn('ssh', 'key rejected by server', { ip, user: username });
           sshLimiter.fail(ip);
-          console.warn(`[ssh] authentication failed for ${username} from ${ip}`);
           return fail('auth', 'The server rejected this key for that user.', 1008);
         }
         // Wrong/missing passphrase or unparseable key surface as plain errors.
         if (/passphrase|parse|unsupported key/i.test(err.message)) {
+          log.warn('ssh', 'unusable key or wrong passphrase', { ip, user: username });
           sshLimiter.fail(ip);
           return fail('auth', /passphrase/i.test(err.message) ? 'Wrong or missing passphrase.' : `Could not read key: ${err.message}`, 1008);
         }
+        if (/host denied|verification failed/i.test(err.message)) {
+          log.alert('ssh', 'host key did not match SSH_HOST_KEY_SHA256', { ip, error: err.message });
+        }
         if (err.level === 'client-socket' || err.level === 'client-timeout') {
+          log.warn('ssh', 'could not reach SSH server', { ip, error: err.message });
           return fail('network', `Could not reach the SSH server: ${err.message}`);
         }
+        log.warn('ssh', 'ssh error', { ip, user: username, error: err.message });
         fail('ssh', `SSH error: ${err.message}`);
       });
 
@@ -114,6 +129,7 @@ export function attachTerminal(ws, ip) {
       });
     } catch (err) {
       // ssh2 throws synchronously for keys it can't parse or decrypt.
+      log.warn('ssh', 'unusable key or wrong passphrase', { ip, user: username });
       sshLimiter.fail(ip);
       fail('auth', /passphrase|encrypted/i.test(err.message) ? 'Wrong or missing passphrase.' : `Could not read key: ${err.message}`, 1008);
     }

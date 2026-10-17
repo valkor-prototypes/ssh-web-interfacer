@@ -26,6 +26,8 @@ export const config = {
   secretsDir: path.resolve(
     (process.env.SECRETS_DIR || path.join(os.homedir(), '.config', 'ssh-web-interfacer')).replace(/^~(?=$|\/)/, os.homedir()),
   ),
+  // Execution and security log (see server/logger.js, scripts/show-warnings.sh).
+  logDir: path.resolve(root, (process.env.LOG_DIR || 'logs').replace(/^~(?=$|\/)/, os.homedir())),
   sessionTtlMs: Number(process.env.SESSION_TTL_HOURS || 12) * 60 * 60 * 1000,
   ssh: {
     host: process.env.SSH_HOST || '127.0.0.1',

@@ -10,3 +10,4 @@ id_*
 cloudflared/*.json
 cloudflared/config.yml
 .secrets/
+logs/

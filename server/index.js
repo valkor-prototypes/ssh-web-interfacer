@@ -5,13 +5,14 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { createSession, readSessionCookie, sessionCookie, verifyPassword, verifySession } from './auth.js';
+import { log } from './logger.js';
 import { clientIp, loginLimiter, sshLimiter } from './ratelimit.js';
 import { loadSessionKey, readPasswordHash } from './secrets.js';
 import { attachTerminal } from './terminal.js';
 
 const sessionKey = loadSessionKey();
 if (!readPasswordHash()) {
-  console.warn(`[auth] no password set in ${config.secretsDir}; run scripts/set-password.sh (logins are refused until then)`);
+  log.warn('auth', 'no password set; run scripts/set-password.sh (logins are refused until then)', { dir: config.secretsDir });
 }
 
 const app = express();
@@ -58,7 +59,9 @@ app.get('/api/session', (req, res) => {
 
 app.post('/api/login', (req, res) => {
   const ip = clientIp(req);
+  const ua = req.headers['user-agent'];
   if (loginLimiter.isLimited(ip)) {
+    log.warn('auth', 'login attempt while blocked', { ip, ua });
     return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
   }
   if (!readPasswordHash()) {
@@ -66,17 +69,18 @@ app.post('/api/login', (req, res) => {
   }
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   if (!password || !verifyPassword(password)) {
+    log.warn('auth', 'failed login', { ip, ua });
     loginLimiter.fail(ip);
-    console.warn(`[auth] failed login from ${ip}`);
     return res.status(401).json({ error: 'Incorrect password.' });
   }
   loginLimiter.clear(ip);
-  console.log(`[auth] login from ${ip}`);
+  log.info('auth', 'login', { ip, ua });
   res.set('Set-Cookie', sessionCookie(createSession(sessionKey, config.sessionTtlMs), cookieOpts));
   res.json({ ok: true });
 });
 
 app.post('/api/logout', (req, res) => {
+  if (isAuthenticated(req)) log.info('auth', 'logout', { ip: clientIp(req) });
   res.set('Set-Cookie', sessionCookie('', { ...cookieOpts, maxAgeMs: 0 }));
   res.json({ ok: true });
 });
@@ -99,7 +103,7 @@ if (fs.existsSync(dist)) {
     res.sendFile(path.join(dist, 'index.html'));
   });
 } else {
-  console.warn('[web] dist/ not found — run `npm run build` (or use `npm run dev` for the Vite dev server)');
+  log.warn('server', 'dist/ not found; run `npm run build` (or use `npm run dev` for the Vite dev server)');
 }
 
 const server = http.createServer(app);
@@ -122,13 +126,17 @@ server.on('upgrade', (req, socket, head) => {
   };
   if (url.pathname !== '/ws') return reject(404, 'Not Found');
   if (!originAllowed(req.headers.origin)) {
-    console.warn(`[ws] rejected origin ${req.headers.origin} from ${ip}`);
+    log.warn('ws', 'rejected origin', { ip, origin: req.headers.origin ?? 'none' });
     return reject(403, 'Forbidden');
   }
-  if (!isAuthenticated(req)) return reject(401, 'Unauthorized');
+  if (!isAuthenticated(req)) {
+    log.warn('ws', 'terminal connection without a valid session', { ip });
+    return reject(401, 'Unauthorized');
+  }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     if (sshLimiter.isLimited(ip)) {
+      log.warn('ssh', 'connection attempt while blocked', { ip });
       ws.send(JSON.stringify({ type: 'error', code: 'ratelimit', message: 'Too many failed attempts. Try again in a few minutes.' }));
       return ws.close(1008);
     }
@@ -136,6 +144,13 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    log.info('server', 'stopping', { signal });
+    process.exit(0);
+  });
+}
+
 server.listen(config.port, config.host, () => {
-  console.log(`[web] listening on http://${config.host}:${config.port}`);
+  log.info('server', 'started', { listen: `http://${config.host}:${config.port}`, ssh: `${config.ssh.host}:${config.ssh.port}`, pid: process.pid });
 });
