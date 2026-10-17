@@ -1,0 +1,178 @@
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --bg: #07070d;
+  --text: rgba(255, 255, 255, 0.92);
+  --text-dim: rgba(255, 255, 255, 0.55);
+  --glass: rgba(28, 28, 40, 0.42);
+  --glass-strong: rgba(22, 22, 32, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-highlight: rgba(255, 255, 255, 0.22);
+  --accent: #0a84ff;
+  --danger: #ff453a;
+  --success: #30d158;
+  --warning: #ffd60a;
+  --radius-lg: 22px;
+  --radius-md: 14px;
+  --blur: blur(40px) saturate(180%);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+/* ── Glass primitive ─────────────────────────────────────────── */
+
+.glass {
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 30px 80px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.glass-button {
+  appearance: none;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s, border-color 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.glass-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.glass-button:active {
+  transform: scale(0.96);
+}
+
+/* ── Animated wallpaper ──────────────────────────────────────── */
+
+.wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background: radial-gradient(ellipse at top, #141428 0%, var(--bg) 70%);
+}
+
+.wallpaper span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.55;
+  animation: drift 26s ease-in-out infinite alternate;
+}
+
+.wallpaper span:nth-child(1) {
+  width: 55vmax;
+  height: 55vmax;
+  background: #5e3bff;
+  top: -18vmax;
+  left: -12vmax;
+}
+
+.wallpaper span:nth-child(2) {
+  width: 45vmax;
+  height: 45vmax;
+  background: #00b4ff;
+  bottom: -18vmax;
+  right: -10vmax;
+  animation-duration: 32s;
+  animation-delay: -8s;
+}
+
+.wallpaper span:nth-child(3) {
+  width: 35vmax;
+  height: 35vmax;
+  background: #ff2d92;
+  top: 35%;
+  left: 45%;
+  opacity: 0.32;
+  animation-duration: 38s;
+  animation-delay: -15s;
+}
+
+@keyframes drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(6vmax, -4vmax) scale(1.1);
+  }
+  100% {
+    transform: translate(-5vmax, 5vmax) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallpaper span {
+    animation: none;
+  }
+}
+
+/* ── Transitions ─────────────────────────────────────────────── */
+
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(8px);
+}
+
+/* xterm: let the glass show through */
+.xterm,
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}

@@ -1,0 +1,10 @@
+# Copy to cloudflared/config.yml (or let scripts/setup-tunnel.sh generate it).
+tunnel: <TUNNEL_UUID>
+credentials-file: /home/<user>/.cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  # Everything for the public hostname goes to the local Node server.
+  # WebSockets are proxied automatically.
+  - hostname: terminal.example.com
+    service: http://127.0.0.1:8022
+  - service: http_status:404

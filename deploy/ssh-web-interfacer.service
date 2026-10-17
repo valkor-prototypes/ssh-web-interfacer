@@ -1,0 +1,22 @@
+# systemd user service for the web terminal backend.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/ssh-web-interfacer.service ~/.config/systemd/user/
+#   # edit WorkingDirectory / ExecStart below if your paths differ
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now ssh-web-interfacer
+#   sudo loginctl enable-linger "$USER"   # keep running while logged out
+[Unit]
+Description=SSH Web Interfacer (homelab web terminal)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Project/ssh-web-interfacer
+ExecStart=/usr/bin/env node server/index.js
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

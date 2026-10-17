@@ -1,0 +1,32 @@
+{
+  "name": "ssh-web-interfacer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Glass-styled web terminal for a homelab, served over a Cloudflare Tunnel and backed by SSH.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "node --watch server/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production node server/index.js",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "ssh2": "^1.16.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "concurrently": "^9.0.1",
+    "vite": "^5.4.10",
+    "vue": "^3.5.12"
+  }
+}
