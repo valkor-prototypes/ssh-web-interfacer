@@ -1,17 +1,17 @@
 # ssh-web-interfacer
 
-A glass-styled, Apple-inspired web terminal for your homelab. Open a real bash shell on your home server from a phone or laptop, anywhere, **without opening a single port on your router**.
+A glass-styled, Apple-inspired web terminal for your homelab, installable as an app. Open a real bash shell on your home server from a phone or laptop, anywhere, **without opening a single port on your router**.
 
 ```
- Phone / laptop ──HTTPS/WSS──▶ Cloudflare edge ──(outbound tunnel)──▶ cloudflared ──▶ Node server ──SSH (private key)──▶ sshd
-                                                                      └──────────── all on the home server ────────────┘
+ Phone / laptop ──HTTPS/WSS──▶ Cloudflare edge ──(outbound tunnel)──▶ cloudflared ──▶ Node server ──SSH──▶ sshd
+  (your SSH key)                                                       └──────────── on the home server ────────────┘
 ```
 
-- **Frontend** — Vue 3 + [xterm.js](https://xtermjs.org/), frosted-glass UI, macOS-style window, extra-keys bar (Esc, Tab, Ctrl, arrows…) on touch devices.
-- **Backend** — a small Node server (`server/`) that serves the built frontend, handles login, and bridges a WebSocket to an SSH shell using [`ssh2`](https://github.com/mscdex/ssh2).
-- **Transport** — a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/): `cloudflared` makes an *outbound* connection to Cloudflare, so the server can stay on its reserved LAN IP.
+- **Frontend:** Vue 3 + [xterm.js](https://xtermjs.org/), frosted-glass UI, macOS-style window, extra-keys bar (Esc, Tab, Ctrl, arrows…) on touch devices. It's a **Progressive Web App**, so you can install it from the site to your home screen, dock or desktop.
+- **Backend:** a small Node server (`server/`) that serves the frontend and relays a WebSocket to an SSH shell using [`ssh2`](https://github.com/mscdex/ssh2).
+- **Transport:** a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/). `cloudflared` makes an *outbound* connection to Cloudflare, so the server stays on its reserved LAN IP.
 
-The SSH private key **never leaves the server** and is never sent to the browser: it's read by the backend from a path (or value) in `.env`, which is git-ignored.
+**You bring the key.** When you open the site, you choose (or paste) your SSH private key and enter a username. The key goes over the encrypted WebSocket to the backend, which uses it for that one SSH login. It is never written to disk, logged, or kept after the connection closes. The server stores no keys or passwords, and access is controlled entirely by `~/.ssh/authorized_keys`, exactly like normal SSH.
 
 ## Requirements
 
@@ -31,40 +31,39 @@ npm install
 npm run build
 ```
 
-### 2. Create a dedicated SSH key
+### 2. Authorise a key for each device
 
-Use a key that exists only for this app, so you can revoke it independently:
+On each device you'll connect from (or on the server, then copy the private key to the device), create a key, ideally **one per device and protected by a passphrase**, so a lost phone can be revoked on its own:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/ssh-web-interfacer -C "ssh-web-interfacer"
-cat ~/.ssh/ssh-web-interfacer.pub >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/ssh-web-interfacer ~/.ssh/authorized_keys
+ssh-keygen -t ed25519 -f ~/.ssh/homelab-phone -C "phone"
 ```
 
-Optionally restrict it to connections from the server itself by prefixing its line in `authorized_keys` with `from="127.0.0.1,::1" `.
+Then add the **public** key on the server:
+
+```bash
+cat homelab-phone.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Because the backend connects from the server itself, you can limit a key to the web terminal by prefixing its line in `authorized_keys` with `from="127.0.0.1,::1" `.
+
+Supported formats: OpenSSH (`-----BEGIN OPENSSH PRIVATE KEY-----`) and PEM (RSA/ECDSA), with or without a passphrase. Ed25519, ECDSA and RSA all work.
 
 ### 3. Configure `.env`
 
 ```bash
 cp .env.example .env
-chmod 600 .env
-npm run hash-password          # paste the printed APP_PASSWORD_HASH line into .env
-node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"   # → SESSION_SECRET
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub                                    # → SSH_HOST_KEY_SHA256
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub     # optional → SSH_HOST_KEY_SHA256
 ```
 
 | Variable | Description |
 | --- | --- |
-| `HOST`, `PORT` | Where the Node server listens. Keep `HOST=127.0.0.1` — only `cloudflared` needs to reach it. Default port `8022`. |
-| `PUBLIC_ORIGIN` | The public URL, e.g. `https://terminal.example.com`. WebSocket connections from any other origin are refused. |
-| `APP_PASSWORD_HASH` | scrypt hash of the login password (`npm run hash-password`). |
-| `SESSION_SECRET` | ≥ 32 random characters used to sign session cookies. Changing it logs everyone out. |
-| `SESSION_TTL_HOURS` | How long a login lasts (default 12). |
-| `SSH_HOST`, `SSH_PORT`, `SSH_USERNAME` | SSH target — normally `127.0.0.1`, `22` and your user. |
-| `SSH_PRIVATE_KEY_PATH` | Path to the private key (preferred). |
-| `SSH_PRIVATE_KEY_BASE64` | Alternatively, the key inline as single-line base64 (`base64 -w0 ~/.ssh/ssh-web-interfacer`). |
-| `SSH_PRIVATE_KEY_PASSPHRASE` | Key passphrase, if any. |
-| `SSH_HOST_KEY_SHA256` | Optional host-key pin; the connection is refused if the server's key doesn't match. |
+| `HOST`, `PORT` | Where the Node server listens. Keep `HOST=127.0.0.1`, since only `cloudflared` needs to reach it. Default port `8022`. |
+| `PUBLIC_ORIGIN` | The public URL, e.g. `https://terminal.example.com`. WebSocket connections from any other origin are refused. Required in production. |
+| `SSH_HOST`, `SSH_PORT` | SSH target, normally `127.0.0.1` and `22`. |
+| `SSH_DEFAULT_USERNAME` | Optional. Pre-fills the username field. |
+| `SSH_HOST_KEY_SHA256` | Optional host-key pin. The connection is refused if the server's key doesn't match. |
 
 ### 4. Run the backend
 
@@ -106,7 +105,7 @@ cloudflared tunnel --config cloudflared/config.yml run           # foreground, t
 
 The script prints the commands to install it as a system service (`sudo cloudflared service install`) so it starts on boot. See `cloudflared/config.example.yml` if you prefer to write the config by hand.
 
-Open `https://terminal.example.com`, enter your password, and you're in.
+Open `https://terminal.example.com`, pick your key, and you're in.
 
 ### 6. Lock it down with Cloudflare Access (strongly recommended)
 
@@ -119,11 +118,28 @@ Unauthenticated visitors are now stopped at Cloudflare's edge and never reach yo
 
 ## Usage
 
-- **Log in** with the password you hashed in step 3. The session is an `HttpOnly`, `Secure`, `SameSite=Strict` cookie valid for `SESSION_TTL_HOURS`.
-- **Every browser tab gets its own fresh shell.** Closing the tab ends that shell, so for long-running work use `tmux` (`tmux new -A -s main` re-attaches to the same session from any device).
+1. Open the site, enter your **username**, then **choose your private key file** (or drag it onto the card, or tap *Paste key text instead*), and add the **passphrase** if the key has one.
+2. Hit **Connect**. If the server rejects the key, you're sent back to the form with the error; the username and key stay filled in.
+3. **Disconnect** closes the shell and forgets the key. Closing or reloading the tab does the same, so you'll pick the key again next time. The username is remembered on the device.
+
+Tips:
+
+- **Every connection gets a fresh shell.** For long-running work use `tmux` (`tmux new -A -s main` re-attaches to the same session from any device).
 - **Text size:** `A−` / `A+` in the title bar (remembered per device).
-- **On a phone:** the bar under the terminal provides Esc, Tab, arrows, `|`, `~`, `^C` and a sticky **ctrl** key (tap *ctrl*, then a letter → e.g. Ctrl-R). Add the page to your home screen for a full-screen app feel.
-- **Disconnected?** Hit *Reconnect*. If your session expired you're sent back to the login screen.
+- **On a phone:** the bar under the terminal provides Esc, Tab, arrows, `|`, `~`, `^C` and a sticky **ctrl** key (tap *ctrl*, then a letter, e.g. Ctrl-R).
+- **Getting the key onto a phone:** save the private key file to the phone's Files app (iOS) or storage (Android), e.g. via AirDrop or a USB cable, and pick it from the file chooser. Avoid sending private keys through chat or email.
+
+### Install as an app (PWA)
+
+The site is a Progressive Web App. Installing it gives you a home-screen/dock icon and a full-screen window without browser chrome.
+
+- **Android / Chrome / Edge (desktop):** tap **Install app** on the connect screen, or use the install icon in the address bar / *⋮ → Install app*.
+- **iPhone / iPad (Safari):** tap **Install app** for instructions, or tap **Share → Add to Home Screen**.
+- **macOS Safari 17+:** *File → Add to Dock*.
+
+The app shell is cached by a service worker, so it opens instantly. You still need a connection to reach the server. When a new version is deployed, the app shows an **Update** button instead of reloading under your open shell.
+
+PWAs need HTTPS. The Cloudflare Tunnel provides it automatically (`localhost` also works for development).
 
 ## Development
 
@@ -131,20 +147,23 @@ Unauthenticated visitors are now stopped at Cloudflare's edge and never reach yo
 npm run dev     # Node backend on :8022 (auto-restart) + Vite on http://localhost:5173 with hot reload
 ```
 
-Vite proxies `/api` and `/ws` to the backend. In development (`NODE_ENV` not `production`) WebSocket origins from `localhost` are accepted and the session cookie isn't marked `Secure`.
+Vite proxies `/api` and `/ws` to the backend. In development (`NODE_ENV` not `production`) WebSocket origins from `localhost` are accepted. The service worker is only generated by `npm run build`; use `npm run build && npm start` to test the PWA.
 
 ```
-server/          Node backend: config, auth (scrypt + signed cookies), SSH ⇄ WebSocket bridge
-web/             Vue 3 frontend (Vite root)
+server/          Node backend: config, rate limiting, SSH ⇄ WebSocket bridge
+web/             Vue 3 PWA frontend (Vite root; icons and favicon in web/public/)
 cloudflared/     Tunnel config example (generated config.yml is git-ignored)
-scripts/         setup-tunnel.sh, hash-password.js
+scripts/         setup-tunnel.sh
 deploy/          systemd user service
 ```
 
 ## Security notes
 
-- The private key, password hash and session secret live only in `.env` (git-ignored, `chmod 600`). The browser only ever receives terminal output.
-- The backend binds to loopback; the only way in from outside is the Cloudflare Tunnel.
-- Login is rate-limited (5 failures per IP per 15 minutes, using Cloudflare's `CF-Connecting-IP`), passwords are verified with scrypt in constant time, and WebSocket upgrades require both a valid session cookie and an allowed `Origin`.
-- Strict CSP, `frame-ancestors 'none'`, and no third-party scripts or fonts.
-- Use a dedicated key for this app and remove its line from `authorized_keys` to revoke access instantly.
+- **No secrets on the server side of the app.** Keys are supplied per connection from the browser, held only in that tab's memory and in the backend's memory for that single SSH connection, and never persisted or logged. Access is governed by `authorized_keys`; remove a key's line to revoke that device instantly.
+- Because the page is reachable from the internet, the SSH login is effectively public, the same as exposing `sshd` with password authentication disabled. Mitigations built in:
+  - the backend binds to loopback, so the only way in from outside is the Cloudflare Tunnel;
+  - failed SSH authentications are rate-limited (5 per IP per 15 minutes, using Cloudflare's `CF-Connecting-IP`);
+  - WebSocket upgrades require an allowed `Origin`, and usernames are validated;
+  - optional SSH host-key pinning;
+  - strict CSP, `frame-ancestors 'none'`, and no third-party scripts or fonts, so nothing else on the page can read the key.
+- **Add Cloudflare Access (step 6)** so strangers are stopped at Cloudflare's edge before they can even try a key. Use passphrase-protected keys, one per device.

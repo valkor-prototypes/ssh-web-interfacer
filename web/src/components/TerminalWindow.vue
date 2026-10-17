@@ -3,11 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { getSession } from '../api.js';
 import KeyBar from './KeyBar.vue';
 
-const props = defineProps({ host: String, user: String });
-const emit = defineEmits(['logout', 'unauthorized']);
+const props = defineProps({ host: String, credentials: { type: Object, required: true } });
+const emit = defineEmits(['disconnect', 'auth-failed']);
+
+const AUTH_ERRORS = new Set(['auth', 'ratelimit', 'timeout']);
 
 const FONT_KEY = 'swi:font-size';
 const container = ref(null);
@@ -64,8 +65,13 @@ function connect() {
   term.reset();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?cols=${term.cols}&rows=${term.rows}`);
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    const { username, privateKey, passphrase } = props.credentials;
+    ws.send(JSON.stringify({ type: 'auth', username, privateKey, passphrase, cols: term.cols, rows: term.rows }));
+  };
 
   ws.onmessage = (event) => {
     if (typeof event.data !== 'string') {
@@ -77,16 +83,15 @@ function connect() {
       status.value = msg.state;
       if (msg.state === 'connected') fitAndResize();
     } else if (msg.type === 'error') {
+      if (AUTH_ERRORS.has(msg.code)) return emit('auth-failed', msg.message);
       status.value = 'error';
       message.value = msg.message;
     }
   };
 
-  ws.onclose = async () => {
-    if (status.value !== 'error') status.value = 'closed';
-    // The upgrade is rejected with 401 when the session expired; check and bounce to login.
-    const session = await getSession().catch(() => null);
-    if (session && !session.authenticated) emit('unauthorized');
+  ws.onclose = () => {
+    if (status.value === 'connecting') message.value ||= 'Could not reach the server.';
+    if (status.value !== 'error') status.value = status.value === 'connecting' ? 'error' : 'closed';
   };
 
   term.focus();
@@ -163,14 +168,14 @@ onBeforeUnmount(() => {
 
       <div class="title">
         <span class="dot" :class="status" />
-        <span class="name">{{ user }}@{{ host }}</span>
+        <span class="name">{{ credentials.username }}@{{ host }}</span>
         <span class="state">{{ statusLabel }}</span>
       </div>
 
       <div class="actions">
         <button class="glass-button icon" title="Smaller text" @click="changeFont(-1)">A−</button>
         <button class="glass-button icon" title="Larger text" @click="changeFont(1)">A+</button>
-        <button class="glass-button" title="Log out" @click="emit('logout')">Log out</button>
+        <button class="glass-button" title="Close the shell and forget the key" @click="emit('disconnect')">Disconnect</button>
       </div>
     </header>
 
