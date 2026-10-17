@@ -4,8 +4,15 @@ import path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
-import { clientIp, isRateLimited } from './ratelimit.js';
+import { createSession, readSessionCookie, sessionCookie, verifyPassword, verifySession } from './auth.js';
+import { clientIp, loginLimiter, sshLimiter } from './ratelimit.js';
+import { loadSessionKey, readPasswordHash } from './secrets.js';
 import { attachTerminal } from './terminal.js';
+
+const sessionKey = loadSessionKey();
+if (!readPasswordHash()) {
+  console.warn(`[auth] no password set in ${config.secretsDir}; run scripts/set-password.sh (logins are refused until then)`);
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -35,9 +42,43 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/api/info', (req, res) => {
+app.use(express.json({ limit: '4kb' }));
+app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ host: config.ssh.host, defaultUsername: config.ssh.defaultUsername });
+  next();
+});
+
+const isAuthenticated = (req) => Boolean(verifySession(readSessionCookie(req.headers.cookie), sessionKey));
+const cookieOpts = { maxAgeMs: config.sessionTtlMs, secure: config.isProduction };
+
+app.get('/api/session', (req, res) => {
+  if (!isAuthenticated(req)) return res.json({ authenticated: false });
+  res.json({ authenticated: true, host: config.ssh.host, defaultUsername: config.ssh.defaultUsername });
+});
+
+app.post('/api/login', (req, res) => {
+  const ip = clientIp(req);
+  if (loginLimiter.isLimited(ip)) {
+    return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+  }
+  if (!readPasswordHash()) {
+    return res.status(503).json({ error: 'No password has been set on the server yet.' });
+  }
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!password || !verifyPassword(password)) {
+    loginLimiter.fail(ip);
+    console.warn(`[auth] failed login from ${ip}`);
+    return res.status(401).json({ error: 'Incorrect password.' });
+  }
+  loginLimiter.clear(ip);
+  console.log(`[auth] login from ${ip}`);
+  res.set('Set-Cookie', sessionCookie(createSession(sessionKey, config.sessionTtlMs), cookieOpts));
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.set('Set-Cookie', sessionCookie('', { ...cookieOpts, maxAgeMs: 0 }));
+  res.json({ ok: true });
 });
 
 const dist = path.join(config.root, 'dist');
@@ -84,9 +125,10 @@ server.on('upgrade', (req, socket, head) => {
     console.warn(`[ws] rejected origin ${req.headers.origin} from ${ip}`);
     return reject(403, 'Forbidden');
   }
+  if (!isAuthenticated(req)) return reject(401, 'Unauthorized');
 
   wss.handleUpgrade(req, socket, head, (ws) => {
-    if (isRateLimited(ip)) {
+    if (sshLimiter.isLimited(ip)) {
       ws.send(JSON.stringify({ type: 'error', code: 'ratelimit', message: 'Too many failed attempts. Try again in a few minutes.' }));
       return ws.close(1008);
     }

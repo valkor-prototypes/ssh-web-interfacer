@@ -11,7 +11,9 @@ A glass-styled, Apple-inspired web terminal for your homelab, installable as an 
 - **Backend:** a small Node server (`server/`) that serves the frontend and relays a WebSocket to an SSH shell using [`ssh2`](https://github.com/mscdex/ssh2).
 - **Transport:** a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/). `cloudflared` makes an *outbound* connection to Cloudflare, so the server stays on its reserved LAN IP.
 
-**You bring the key.** When you open the site, you choose (or paste) your SSH private key and enter a username. The key goes over the encrypted WebSocket to the backend, which uses it for that one SSH login. It is never written to disk, logged, or kept after the connection closes. The server stores no keys or passwords, and access is controlled entirely by `~/.ssh/authorized_keys`, exactly like normal SSH.
+**Two locks.** The site first asks for a **password**, checked on the server against a salted SHA-256 hash. Then **you bring the key**: you choose (or paste) your SSH private key and enter a username. The key goes over the encrypted WebSocket to the backend, which uses it for that one SSH login. It is never written to disk, logged, or kept after the connection closes. SSH access itself is controlled by `~/.ssh/authorized_keys`, exactly like normal SSH.
+
+The code is all in the repository. The only secrets (password hash, salt, session-signing key) live on the server in `~/.config/ssh-web-interfacer/`, outside the repo, readable only by your user.
 
 ## Requirements
 
@@ -61,11 +63,31 @@ ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub     # optional → SSH_HOST_KEY
 | --- | --- |
 | `HOST`, `PORT` | Where the Node server listens. Keep `HOST=127.0.0.1`, since only `cloudflared` needs to reach it. Default port `8022`. |
 | `PUBLIC_ORIGIN` | The public URL, e.g. `https://terminal.example.com`. WebSocket connections from any other origin are refused. Required in production. |
+| `SECRETS_DIR` | Where the password hash, salt and session key are stored. Default `~/.config/ssh-web-interfacer`. |
+| `SESSION_TTL_HOURS` | How long a login lasts (default 12). |
 | `SSH_HOST`, `SSH_PORT` | SSH target, normally `127.0.0.1` and `22`. |
 | `SSH_DEFAULT_USERNAME` | Optional. Pre-fills the username field. |
 | `SSH_HOST_KEY_SHA256` | Optional host-key pin. The connection is refused if the server's key doesn't match. |
 
-### 4. Run the backend
+### 4. Set the login password
+
+```bash
+scripts/set-password.sh
+```
+
+It prompts twice (input hidden), then writes to the secrets directory (created with mode `700`, files `600`):
+
+| File | Contents |
+| --- | --- |
+| `password.salt` | random 32-byte salt (hex), created once |
+| `password.sha256` | `sha256(salt + password)` (hex) |
+| `session.key` | random key that signs login cookies, created by the server on first start |
+
+**To reset the password**, run the script again. It takes effect immediately (no restart) and signs out every open session. To print the hash of any string with your salt without saving it, run `scripts/set-password.sh --hash 'some text'`.
+
+Until a password is set, the server refuses all logins.
+
+### 5. Run the backend
 
 ```bash
 npm start            # serves http://127.0.0.1:8022
@@ -84,7 +106,7 @@ sudo loginctl enable-linger "$USER"   # keep user services running while logged 
 journalctl --user -u ssh-web-interfacer -f
 ```
 
-### 5. Create the Cloudflare Tunnel
+### 6. Create the Cloudflare Tunnel
 
 ```bash
 scripts/setup-tunnel.sh terminal.example.com
@@ -105,9 +127,9 @@ cloudflared tunnel --config cloudflared/config.yml run           # foreground, t
 
 The script prints the commands to install it as a system service (`sudo cloudflared service install`) so it starts on boot. See `cloudflared/config.example.yml` if you prefer to write the config by hand.
 
-Open `https://terminal.example.com`, pick your key, and you're in.
+Open `https://terminal.example.com`, enter your password, pick your key, and you're in.
 
-### 6. Lock it down with Cloudflare Access (strongly recommended)
+### 7. Lock it down with Cloudflare Access (strongly recommended)
 
 This page is a shell on your server, so add a second, independent gate in front of it. In the Cloudflare dashboard → **Zero Trust → Access → Applications → Add an application → Self-hosted**:
 
@@ -118,9 +140,10 @@ Unauthenticated visitors are now stopped at Cloudflare's edge and never reach yo
 
 ## Usage
 
-1. Open the site, enter your **username**, then **choose your private key file** (or drag it onto the card, or tap *Paste key text instead*), and add the **passphrase** if the key has one.
-2. Hit **Connect**. If the server rejects the key, you're sent back to the form with the error; the username and key stay filled in.
-3. **Disconnect** closes the shell and forgets the key. Closing or reloading the tab does the same, so you'll pick the key again next time. The username is remembered on the device.
+1. Open the site and enter the **password**. The login lasts `SESSION_TTL_HOURS` on that device (an `HttpOnly`, `Secure`, `SameSite=Strict` cookie).
+2. Enter your **username**, then **choose your private key file** (or drag it onto the card, or tap *Paste key text instead*), and add the **passphrase** if the key has one.
+3. Hit **Connect**. If the server rejects the key, you're sent back to the form with the error; the username and key stay filled in.
+4. **Disconnect** closes the shell and forgets the key, leaving you on the key screen. Closing or reloading the tab also forgets the key, so you'll pick it again next time (the password login and the username are remembered). **Log out** ends the password session too.
 
 Tips:
 
@@ -133,7 +156,7 @@ Tips:
 
 The site is a Progressive Web App. Installing it gives you a home-screen/dock icon and a full-screen window without browser chrome.
 
-- **Android / Chrome / Edge (desktop):** tap **Install app** on the connect screen, or use the install icon in the address bar / *⋮ → Install app*.
+- **Android / Chrome / Edge (desktop):** tap **Install app** on the login or connect screen, or use the install icon in the address bar / *⋮ → Install app*.
 - **iPhone / iPad (Safari):** tap **Install app** for instructions, or tap **Share → Add to Home Screen**.
 - **macOS Safari 17+:** *File → Add to Dock*.
 
@@ -150,20 +173,18 @@ npm run dev     # Node backend on :8022 (auto-restart) + Vite on http://localhos
 Vite proxies `/api` and `/ws` to the backend. In development (`NODE_ENV` not `production`) WebSocket origins from `localhost` are accepted. The service worker is only generated by `npm run build`; use `npm run build && npm start` to test the PWA.
 
 ```
-server/          Node backend: config, rate limiting, SSH ⇄ WebSocket bridge
+server/          Node backend: config, secrets, password + session auth, rate limiting, SSH ⇄ WebSocket bridge
 web/             Vue 3 PWA frontend (Vite root; icons and favicon in web/public/)
 cloudflared/     Tunnel config example (generated config.yml is git-ignored)
-scripts/         setup-tunnel.sh
+scripts/         setup-tunnel.sh, set-password.sh
 deploy/          systemd user service
 ```
 
 ## Security notes
 
-- **No secrets on the server side of the app.** Keys are supplied per connection from the browser, held only in that tab's memory and in the backend's memory for that single SSH connection, and never persisted or logged. Access is governed by `authorized_keys`; remove a key's line to revoke that device instantly.
-- Because the page is reachable from the internet, the SSH login is effectively public, the same as exposing `sshd` with password authentication disabled. Mitigations built in:
-  - the backend binds to loopback, so the only way in from outside is the Cloudflare Tunnel;
-  - failed SSH authentications are rate-limited (5 per IP per 15 minutes, using Cloudflare's `CF-Connecting-IP`);
-  - WebSocket upgrades require an allowed `Origin`, and usernames are validated;
-  - optional SSH host-key pinning;
-  - strict CSP, `frame-ancestors 'none'`, and no third-party scripts or fonts, so nothing else on the page can read the key.
-- **Add Cloudflare Access (step 6)** so strangers are stopped at Cloudflare's edge before they can even try a key. Use passphrase-protected keys, one per device.
+- **Secrets stay on the server, outside git.** The password hash, salt and session key are in `SECRETS_DIR` (`~/.config/ssh-web-interfacer`, mode `700`). `.env` holds no secrets. SSH private keys are supplied per connection from the browser, held only in that tab's memory and in the backend's memory for that single SSH connection, and never saved or logged. Remove a key's line from `authorized_keys` to revoke that device instantly.
+- **Two independent checks:** the password gates the whole site, including the WebSocket (no valid session cookie → `401`), and the SSH key gates the shell.
+- The password is sent over HTTPS and hashed on the server as `sha256(salt + password)`, compared in constant time. SHA-256 is fast, so if the hash file ever leaked, a weak password could be brute-forced offline. Use a long passphrase (the script requires ≥ 12 characters).
+- Session cookies are HMAC-signed with `session.key` and bound to the current password hash, so resetting the password signs everyone out. Deleting `session.key` (then restarting) does the same.
+- Built-in mitigations: the backend binds to loopback, so the only way in from outside is the Cloudflare Tunnel. Failed logins and failed SSH authentications are each limited to 5 per IP per 15 minutes (using Cloudflare's `CF-Connecting-IP`). WebSocket upgrades also require an allowed `Origin`, usernames are validated, SSH host-key pinning is optional, and a strict CSP (`frame-ancestors 'none'`, no third-party scripts or fonts) keeps anything else on the page from reading the key.
+- **Add Cloudflare Access (step 7)** so strangers are stopped at Cloudflare's edge before they even see the login page. Use passphrase-protected keys, one per device.

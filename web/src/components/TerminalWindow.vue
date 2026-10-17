@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { getSession } from '../api.js';
 import KeyBar from './KeyBar.vue';
 
 const props = defineProps({ host: String, credentials: { type: Object, required: true } });
-const emit = defineEmits(['disconnect', 'auth-failed']);
+const emit = defineEmits(['disconnect', 'auth-failed', 'unauthorized']);
 
 const AUTH_ERRORS = new Set(['auth', 'ratelimit', 'timeout']);
 
@@ -89,9 +90,12 @@ function connect() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = async () => {
     if (status.value === 'connecting') message.value ||= 'Could not reach the server.';
     if (status.value !== 'error') status.value = status.value === 'connecting' ? 'error' : 'closed';
+    // The upgrade is rejected with 401 once the login session expires.
+    const session = await getSession().catch(() => null);
+    if (session && !session.authenticated) emit('unauthorized');
   };
 
   term.focus();

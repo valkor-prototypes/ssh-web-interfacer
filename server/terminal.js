@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Client } from 'ssh2';
 import { config } from './config.js';
-import { clearFailures, recordFailure } from './ratelimit.js';
+import { sshLimiter } from './ratelimit.js';
 
 const PING_INTERVAL_MS = 25_000;
 const AUTH_TIMEOUT_MS = 30_000;
@@ -70,7 +70,7 @@ export function attachTerminal(ws, ip) {
     ssh
       .on('ready', () => {
         clearTimeout(authTimer);
-        clearFailures(ip);
+        sshLimiter.clear(ip);
         console.log(`[ssh] ${username} authenticated from ${ip}`);
         send(ws, { type: 'status', state: 'connected', host: config.ssh.host, user: username });
         ssh.shell({ term: 'xterm-256color', cols: clamp(cols, 1, 1000) || 80, rows: clamp(rows, 1, 500) || 24 }, (err, s) => {
@@ -86,13 +86,13 @@ export function attachTerminal(ws, ip) {
       })
       .on('error', (err) => {
         if (err.level === 'client-authentication') {
-          recordFailure(ip);
+          sshLimiter.fail(ip);
           console.warn(`[ssh] authentication failed for ${username} from ${ip}`);
           return fail('auth', 'The server rejected this key for that user.', 1008);
         }
         // Wrong/missing passphrase or unparseable key surface as plain errors.
         if (/passphrase|parse|unsupported key/i.test(err.message)) {
-          recordFailure(ip);
+          sshLimiter.fail(ip);
           return fail('auth', /passphrase/i.test(err.message) ? 'Wrong or missing passphrase.' : `Could not read key: ${err.message}`, 1008);
         }
         if (err.level === 'client-socket' || err.level === 'client-timeout') {
@@ -114,7 +114,7 @@ export function attachTerminal(ws, ip) {
       });
     } catch (err) {
       // ssh2 throws synchronously for keys it can't parse or decrypt.
-      recordFailure(ip);
+      sshLimiter.fail(ip);
       fail('auth', /passphrase|encrypted/i.test(err.message) ? 'Wrong or missing passphrase.' : `Could not read key: ${err.message}`, 1008);
     }
   }

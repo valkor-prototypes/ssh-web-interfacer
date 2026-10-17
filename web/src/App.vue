@@ -1,14 +1,25 @@
 <script setup>
 import { onMounted, ref, shallowRef } from 'vue';
-import { getInfo } from './api.js';
+import { getSession, logout } from './api.js';
 import { needRefresh, updateServiceWorker } from './pwa.js';
+import LoginCard from './components/LoginCard.vue';
 import ConnectCard from './components/ConnectCard.vue';
 import TerminalWindow from './components/TerminalWindow.vue';
 
-const info = ref({ host: '', defaultUsername: '' });
-// Credentials live only in memory for the lifetime of this tab.
+const state = ref('loading'); // loading | login | ready
+const session = ref({});
+// SSH credentials live only in memory for the lifetime of this tab.
 const credentials = shallowRef(null);
 const error = ref('');
+
+async function refresh() {
+  try {
+    session.value = await getSession();
+    state.value = session.value.authenticated ? 'ready' : 'login';
+  } catch {
+    state.value = 'login';
+  }
+}
 
 function onConnect(creds) {
   error.value = '';
@@ -22,18 +33,27 @@ function onAuthFailed(message) {
   credentials.value = { username, privateKey, keyName, failed: true };
 }
 
-function dismissUpdate() {
-  needRefresh.value = false;
-}
-
 function onDisconnect() {
   error.value = '';
   credentials.value = null;
 }
 
-onMounted(async () => {
-  info.value = await getInfo().catch(() => info.value);
-});
+function onUnauthorized() {
+  credentials.value = null;
+  state.value = 'login';
+}
+
+async function onLogout() {
+  await logout().catch(() => {});
+  onDisconnect();
+  state.value = 'login';
+}
+
+function dismissUpdate() {
+  needRefresh.value = false;
+}
+
+onMounted(refresh);
 </script>
 
 <template>
@@ -41,22 +61,25 @@ onMounted(async () => {
 
   <main class="stage">
     <Transition name="fade-scale" mode="out-in">
+      <LoginCard v-if="state === 'login'" key="login" @authenticated="refresh" />
       <TerminalWindow
-        v-if="credentials && !credentials.failed"
+        v-else-if="state === 'ready' && credentials && !credentials.failed"
         key="terminal"
-        :host="info.host"
+        :host="session.host"
         :credentials="credentials"
         @disconnect="onDisconnect"
         @auth-failed="onAuthFailed"
+        @unauthorized="onUnauthorized"
       />
       <ConnectCard
-        v-else
+        v-else-if="state === 'ready'"
         key="connect"
-        :host="info.host"
-        :default-username="info.defaultUsername"
+        :host="session.host"
+        :default-username="session.defaultUsername"
         :initial="credentials || {}"
         :error="error"
         @connect="onConnect"
+        @logout="onLogout"
       />
     </Transition>
   </main>
