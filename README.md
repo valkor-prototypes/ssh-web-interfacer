@@ -15,6 +15,8 @@ A glass-styled, Apple-inspired web terminal for your homelab, installable as an 
 
 The code is all in the repository. The only secrets (password hash, salt, session-signing key) live on the server in `~/.config/ssh-web-interfacer/`, outside the repo, readable only by your user.
 
+> 📚 Developer documentation lives in [`docs/`](docs/README.md): architecture, protocol, security model, code review guide, testing, operations, and the multi-server roadmap.
+
 ## Requirements
 
 - Linux home server running `sshd`
@@ -239,6 +241,7 @@ web/             Vue 3 PWA frontend (Vite root; icons and favicon in web/public/
 cloudflared/     Tunnel config example (generated config.yml is git-ignored)
 scripts/         setup-tunnel.sh, quick-tunnel.sh, set-password.sh, show-warnings.sh
 logs/            server.log (+ rotated files), created at runtime, git-ignored
+docs/            developer documentation
 deploy/          systemd user service
 ```
 
