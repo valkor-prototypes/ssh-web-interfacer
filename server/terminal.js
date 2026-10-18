@@ -97,7 +97,7 @@ export function attachTerminal(ws, ip) {
         if (err.level === 'client-authentication') {
           log.warn('ssh', 'key rejected by server', { ip, user: username });
           sshLimiter.fail(ip);
-          return fail('auth', 'The server rejected this key for that user.', 1008);
+          return fail('auth', `The server rejected the login for "${username}". Check that the user is your account on the server (not the key's name) and that this key is in its authorized_keys.`, 1008);
         }
         // Wrong/missing passphrase or unparseable key surface as plain errors.
         if (/passphrase|parse|unsupported key/i.test(err.message)) {

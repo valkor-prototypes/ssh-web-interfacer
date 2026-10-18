@@ -128,7 +128,7 @@ function submit() {
         autocapitalize="off"
         autocorrect="off"
         spellcheck="false"
-        placeholder="username"
+        placeholder="account on the server, e.g. your login"
       />
     </label>
 
