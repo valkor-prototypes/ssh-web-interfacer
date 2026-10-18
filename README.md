@@ -18,7 +18,11 @@ The code is all in the repository. The only secrets (password hash, salt, sessio
 ## Requirements
 
 - Linux home server running `sshd`
-- Node.js ≥ 20.12 (22 LTS recommended)
+- Node.js ≥ 20.12 (22 LTS recommended). Ubuntu's own `nodejs` package is too old (22.04 ships Node 12). Install it from [NodeSource](https://github.com/nodesource/distributions) instead:
+  ```bash
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt install -y nodejs
+  ```
 - A domain on a (free) Cloudflare account, for the tunnel hostname
 - `cloudflared` ([install guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/))
 
