@@ -111,7 +111,23 @@ sudo loginctl enable-linger "$USER"   # keep user services running while logged 
 journalctl --user -u ssh-web-interfacer -f
 ```
 
-### 6. Create the Cloudflare Tunnel
+### 6a. Try it for free with a Quick Tunnel (no account, no domain)
+
+```bash
+scripts/quick-tunnel.sh
+```
+
+This starts a [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) plus the server, and prints a random public address like `https://brave-otter-sample-words.trycloudflare.com`. That address is automatically allowed as `PUBLIC_ORIGIN`, so you don't need to edit `.env`. Press Ctrl-C to stop both.
+
+Good for testing, but not for daily use:
+
+- **The address changes on every run**, so bookmarks and an installed PWA from a previous run stop working.
+- There's no uptime guarantee, and Cloudflare Access (step 7) can't be put in front of a `trycloudflare.com` address. The password and SSH key still protect it, but anyone who learns the link can reach the login page.
+- Stop the systemd service first if it's running (`systemctl --user stop ssh-web-interfacer`), since both use the same port.
+
+When you're happy with it, set up a permanent address below. Named tunnels are free too; you only pay for the domain.
+
+### 6b. Create a permanent Cloudflare Tunnel
 
 ```bash
 scripts/setup-tunnel.sh terminal.example.com
@@ -221,7 +237,7 @@ Vite proxies `/api` and `/ws` to the backend. In development (`NODE_ENV` not `pr
 server/          Node backend: config, secrets, password + session auth, rate limiting, logging, SSH ⇄ WebSocket bridge
 web/             Vue 3 PWA frontend (Vite root; icons and favicon in web/public/)
 cloudflared/     Tunnel config example (generated config.yml is git-ignored)
-scripts/         setup-tunnel.sh, set-password.sh, show-warnings.sh
+scripts/         setup-tunnel.sh, quick-tunnel.sh, set-password.sh, show-warnings.sh
 logs/            server.log (+ rotated files), created at runtime, git-ignored
 deploy/          systemd user service
 ```
